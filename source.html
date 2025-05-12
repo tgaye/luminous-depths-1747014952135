@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Luminous Depths</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(135deg, #001f3f, #003366);
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.8.0/lib/p5.js"></script>
+
+<base target="_self">
+
+
+    <div id="canvas-container"></div>
+
+    <script>
+        const sketch = (p) => {
+            // System configuration
+            let jellyfish = [];
+            let particles = [];
+            let bubbles = [];
+            let rippleEffects = [];
+            let lastClickTime = 0;
+            let colorPalette;
+            let bgGradient;
+            let lightRayAngle = 0;
+            let audioContext;
+            let oscillator;
+            let gainNode;
+            let isAudioEnabled = false;
+            
+            // Jellyfish class
+            class Jellyfish {
+                constructor() {
+                    this.reset();
+                    this.size = p.random(30, 80);
+                    this.tentacleCount = p.floor(p.random(5, 9));
+                    this.tentacleLength = p.random(50, 120);
+                    this.pulseSpeed = p.random(0.02, 0.05);
+                    this.pulsePhase = p.random(p.TWO_PI);
+                    this.color = p.color(
+                        p.random(150, 250),
+                        p.random(100, 200),
+                        p.random(200, 255),
+                        p.random(150, 220)
+                    );
+                    this.glowColor = p.color(
+                        p.red(this.color),
+                        p.green(this.color),
+                        p.blue(this.color),
+                        50
+                    );
+                }
+                
+                reset() {
+                    this.pos = p.createVector(
+                        p.random(-100, p.width + 100),
+                        p.random(-100, p.height + 100)
+                    );
+                    this.vel = p.createVector(
+                        p.random(-0.5, 0.5),
+                        p.random(-0.3, 0.3)
+                    );
+                    this.target = p.createVector(
+                        p.random(p.width),
+                        p.random(p.height)
+                    );
+                    this.changeTargetTime = p.random(100, 300);
+                    this.timer = 0;
+                }
+                
+                update() {
+                    // Update position with smooth movement toward target
+                    let targetDirection = p5.Vector.sub(this.target, this.pos);
+                    if (targetDirection.mag() < 50 || this.timer >= this.changeTargetTime) {
+                        this.target = p.createVector(
+                            p.random(p.width),
+                            p.random(p.height)
+                        );
+                        this.timer = 0;
+                        this.changeTargetTime = p.random(100, 300);
+                    } else {
+                        targetDirection.normalize();
+                        targetDirection.mult(0.2);
+                        this.vel.lerp(targetDirection, 0.05);
+                        this.pos.add(this.vel);
+                        this.timer++;
+                    }
+                    
+                    // Avoid mouse if close
+                    let mouseDist = p.dist(p.mouseX, p.mouseY, this.pos.x, this.pos.y);
+                    if (mouseDist < 150 && p.mouseX > 0 && p.mouseY > 0) {
+                        let avoidDir = p5.Vector.sub(this.pos, p.createVector(p.mouseX, p.mouseY));
+                        avoidDir.normalize();
+                        avoidDir.mult(2);
+                        this.vel.add(avoidDir);
+                    }
+                    
+                    // Keep within bounds with soft repulsion
+                    if (this.pos.x < 0) this.vel.x += 0.5;
+                    if (this.pos.x > p.width) this.vel.x -= 0.5;
+                    if (this.pos.y < 0) this.vel.y += 0.5;
+                    if (this.pos.y > p.height) this.vel.y -= 0.5;
+                    
+                    // Limit speed
+                    this.vel.limit(1.5);
+                    
+                    // Update pulse animation
+                    this.pulsePhase += this.pulseSpeed;
+                }
+                
+                display() {
+                    p.push();
+                    p.translate(this.pos.x, this.pos.y);
+                    
+                    // Glow effect
+                    p.drawingContext.shadowBlur = 30;
+                    p.drawingContext.shadowColor = this.glowColor;
+                    
+                    // Bell body with pulse animation
+                    let pulseSize = this.size * (1 + 0.1 * p.sin(this.pulsePhase));
+                    p.fill(this.color);
+                    p.noStroke();
+                    p.ellipse(0, 0, pulseSize, pulseSize * 0.8);
+                    
+                    // Tentacles
+                    for (let i = 0; i < this.tentacleCount; i++) {
+                        let angle = p.map(i, 0, this.tentacleCount, 0, p.TWO_PI);
+                        let tentacleWobble = p.sin(this.pulsePhase * 2 + i * 0.5) * 0.3;
+                        
+                        p.beginShape();
+                        p.vertex(0, pulseSize * 0.4);
+                        for (let j = 1; j <= 5; j++) {
+                            let segmentLength = this.tentacleLength * (j/5);
+                            let segmentX = p.sin(angle + tentacleWobble) * segmentLength * 0.3;
+                            let segmentY = pulseSize * 0.4 + segmentLength * (j/5);
+                            p.quadraticVertex(
+                                segmentX * 0.5,
+                                pulseSize * 0.4 + segmentLength * (j/5) * 0.5,
+                                segmentX,
+                                segmentY
+                            );
+                        }
+                        p.endShape();
+                    }
+                    
+                    p.drawingContext.shadowBlur = 0;
+                    p.pop();
+                    
+                    // Leave faint trail particles
+                    if (p.frameCount % 3 === 0) {
+                        particles.push({
+                            pos: this.pos.copy(),
+                            size: p.random(2, 5),
+                            color: p.color(
+                                p.red(this.color),
+                                p.green(this.color),
+                                p.blue(this.color),
+                                p.random(30, 80)
+                            ),
+                            life: p.random(50, 100),
+                            vel: p5.Vector.random2D().mult(0.2)
+                        });
+                    }
+                }
+            }
+            
+            // Bubble system
+            class Bubble {
+                constructor(x, y, isClickBubble = false) {
+                    this.pos = p.createVector(x, y);
+                    this.vel = p.createVector(0, p.random(-1.5, -0.5));
+                    this.size = isClickBubble ? p.random(10, 25) : p.random(5, 15);
+                    this.life = p.random(100, 200);
+                    this.wobbleOffset = p.random(p.TWO_PI);
+                    this.wobbleSpeed = p.random(0.05, 0.1);
+                    this.opacity = p.random(100, 200);
+                }
+                
+                update() {
+                    this.pos.add(this.vel);
+                    this.vel.x += p.random(-0.05, 0.05);
+                    this.life--;
+                    
+                    // Random horizontal movement
+                    if (p.frameCount % 10 === 0) {
+                        this.vel.x += p.random(-0.2, 0.2);
+                    }
+                }
+                
+                display() {
+                    let wobble = p.sin(p.frameCount * this.wobbleSpeed + this.wobbleOffset) * this.size * 0.1;
+                    p.noFill();
+                    p.stroke(200, 230, 255, this.opacity);
+                    p.strokeWeight(1);
+                    p.ellipse(this.pos.x, this.pos.y, this.size + wobble, this.size - wobble);
+                    
+                    // Highlight
+                    p.fill(255, 255, 255, this.opacity * 0.3);
+                    p.noStroke();
+                    p.ellipse(
+                        this.pos.x - this.size * 0.2,
+                        this.pos.y - this.size * 0.2,
+                        this.size * 0.3,
+                        this.size * 0.3
+                    );
+                }
+                
+                isDead() {
+                    return this.life <= 0 || this.pos.y < -this.size;
+                }
+            }
+            
+            // Ripple effect for clicks
+            class Ripple {
+                constructor(x, y) {
+                    this.pos = p.createVector(x, y);
+                    this.radius = 5;
+                    this.maxRadius = p.random(100, 200);
+                    this.speed = p.random(2, 4);
+                    this.thickness = p.random(3, 6);
+                    this.opacity = 150;
+                    this.color = p.color(150, 200, 255, this.opacity);
+                }
+                
+                update() {
+                    this.radius += this.speed;
+                    this.opacity -= 2;
+                    this.color.setAlpha(this.opacity);
+                }
+                
+                display() {
+                    p.noFill();
+                    p.stroke(this.color);
+                    p.strokeWeight(this.thickness);
+                    p.ellipse(this.pos.x, this.pos.y, this.radius * 2);
+                }
+                
+                isDead() {
+                    return this.radius > this.maxRadius || this.opacity <= 0;
+                }
+            }
+            
+            p.setup = () => {
+                let canvas = p.createCanvas(p.windowWidth, p.windowHeight);
+                canvas.parent('canvas-container');
+                p.colorMode(p.HSB, 360, 100, 100, 255);
+                
+                // Initialize color palette
+                colorPalette = {
+                    deepBlue: p.color(210, 80, 30),
+                    midBlue: p.color(200, 60, 50),
+                    lightBlue: p.color(190, 40, 70),
+                    jellyColors: [
+                        p.color(300, 60, 90, 180),
+                        p.color(340, 70, 90, 180),
+                        p.color(260, 70, 90, 180),
+                        p.color(220, 60, 90, 180)
+                    ]
+                };
+                
+                // Create jellyfish
+                for (let i = 0; i < 8; i++) {
+                    jellyfish.push(new Jellyfish());
+                }
+                
+                // Create initial particles
+                for (let i = 0; i < 200; i++) {
+                    particles.push({
+                        pos: p.createVector(p.random(p.width), p.random(p.height)),
+                        size: p.random(1, 3),
+                        color: p.color(190, 30, 80, p.random(30, 100)),
+                        life: p.random(100, 200),
+                        vel: p.createVector(p.random(-0.2, 0.2), p.random(-0.2, 0.2))
+                    });
+                }
+                
+                // Initialize audio context if available
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    gainNode = audioContext.createGain();
+                    gainNode.gain.value = 0;
+                    gainNode.connect(audioContext.destination);
+                    isAudioEnabled = true;
+                } catch (e) {
+                    console.log("Audio not supported");
+                    isAudioEnabled = false;
+                }
+            };
+            
+            p.draw = () => {
+                // Draw gradient background
+                drawBackground();
+                
+                // Update and display all systems
+                updateParticles();
+                updateBubbles();
+                updateRipples();
+                updateJellyfish();
+                drawLightRays();
+                
+                // Create occasional random bubbles
+                if (p.frameCount % 60 === 0 && p.random() > 0.7) {
+                    bubbles.push(new Bubble(
+                        p.random(p.width),
+                        p.height + 10,
+                        false
+                    ));
+                }
+            };
+            
+            function drawBackground() {
+                // Underwater gradient
+                let gradient = p.drawingContext.createLinearGradient(0, 0, 0, p.height);
+                gradient.addColorStop(0, colorPalette.midBlue);
+                gradient.addColorStop(0.5, colorPalette.deepBlue);
+                gradient.addColorStop(1, p.color(210, 90, 10));
+                
+                p.drawingContext.fillStyle = gradient;
+                p.drawingContext.fillRect(0, 0, p.width, p.height);
+                
+                // Subtle caustic light pattern
+                p.noStroke();
+                for (let y = 0; y < p.height; y += 20) {
+                    for (let x = 0; x < p.width; x += 20) {
+                        let noiseVal = p.noise(x * 0.01, y * 0.01, p.frameCount * 0.01);
+                        let alpha = p.map(noiseVal, 0, 1, 5, 15);
+                        p.fill(190, 20, 90, alpha);
+                        p.ellipse(
+                            x + p.random(-5, 5),
+                            y + p.random(-5, 5),
+                            p.random(5, 15),
+                            p.random(5, 15)
+                        );
+                    }
+                }
+            }
+            
+            function updateParticles() {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    let part = particles[i];
+                    part.pos.add(part.vel);
+                    part.life--;
+                    part.vel.mult(0.98); // Slow down over time
+                    
+                    // Draw particle
+                    p.noStroke();
+                    p.fill(part.color);
+                    p.ellipse(part.pos.x, part.pos.y, part.size);
+                    
+                    // Remove dead particles
+                    if (part.life <= 0 || 
+                        part.pos.x < -part.size || 
+                        part.pos.x > p.width + part.size || 
+                        part.pos.y < -part.size || 
+                        part.pos.y > p.height + part.size) {
+                        particles.splice(i, 1);
+                    }
+                }
+            }
+            
+            function updateBubbles() {
+                for (let i = bubbles.length - 1; i >= 0; i--) {
+                    let bubble = bubbles[i];
+                    bubble.update();
+                    bubble.display();
+                    
+                    if (bubble.isDead()) {
+                        bubbles.splice(i, 1);
+                    }
+                }
+            }
+            
+            function updateRipples() {
+                for (let i = rippleEffects.length - 1; i >= 0; i--) {
+                    let ripple = rippleEffects[i];
+                    ripple.update();
+                    ripple.display();
+                    
+                    if (ripple.isDead()) {
+                        rippleEffects.splice(i, 1);
+                    }
+                }
+            }
+            
+            function updateJellyfish() {
+                for (let jelly of jellyfish) {
+                    jelly.update();
+                    jelly.display();
+                }
+            }
+            
+            function drawLightRays() {
+                lightRayAngle += 0.002;
+                let centerX = p.width * 0.5;
+                let centerY = p.height * 0.3;
+                let rayCount = 8;
+                let maxLength = p.width * 0.8;
+                
+                p.push();
+                p.translate(centerX, centerY);
+                p.rotate(lightRayAngle);
+                
+                for (let i = 0; i < rayCount; i++) {
+                    let angle = p.TWO_PI / rayCount * i;
+                    let length = maxLength * (0.7 + 0.3 * p.noise(i * 10, p.frameCount * 0.01));
+                    let alpha = 10 + 5 * p.sin(p.frameCount * 0.05 + i);
+                    
+                    p.stroke(190, 20, 90, alpha);
+                    p.strokeWeight(1 + p.noise(i, p.frameCount * 0.01) * 2);
+                    p.line(0, 0, p.cos(angle) * length, p.sin(angle) * length);
+                }
+                
+                p.pop();
+            }
+            
+            p.mousePressed = () => {
+                // Create bubbles on click
+                for (let i = 0; i < 10; i++) {
+                    bubbles.push(new Bubble(
+                        p.mouseX + p.random(-20, 20),
+                        p.mouseY + p.random(-10, 10),
+                        true
+                    ));
+                }
+                
+                // Create ripple effect
+                rippleEffects.push(new Ripple(p.mouseX, p.mouseY));
+                
+                // Play subtle sound if audio is enabled
+                if (isAudioEnabled && p.millis() - lastClickTime > 300) {
+                    playClickSound(p.mouseX / p.width);
+                    lastClickTime = p.millis();
+                }
+            };
+            
+            function playClickSound(pitch) {
+                if (!isAudioEnabled) return;
+                
+                // Create oscillator if it doesn't exist
+                if (!oscillator) {
+                    oscillator = audioContext.createOscillator();
+                    oscillator.type = 'sine';
+                    oscillator.connect(gainNode);
+                    oscillator.start();
+                }
+                
+                // Set frequency based on mouse position (higher pitch toward right)
+                oscillator.frequency.setValueAtTime(220 + pitch * 440, audioContext.currentTime);
+                
+                // Quick envelope for plucky sound
+                gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.3);
+            }
+            
+            p.touchStarted = () => {
+                // Prevent default to avoid scrolling on mobile
+                return false;
+            };
+            
+            p.windowResized = () => {
+                p.resizeCanvas(p.windowWidth, p.windowHeight);
+            };
+        };
+        
+        new p5(sketch);
+    </script>
+
+              
+          
+                
+          
+              
